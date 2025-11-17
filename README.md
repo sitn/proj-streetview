@@ -1,6 +1,6 @@
 # Detection of manholes on street view images
 
-The scripts in this repo allow detecting manholes on street view images and projecting the detections to a geographical reference system. Detection with detectron2 and YOLO is available. Detailed method and results are discussed on the [STDL tech website](https://www.tech.stdl.ch/PROJ-STREETVIEW)
+The scripts in this repo allow detecting manholes on street view images and projecting the detections to a geographical reference system. Detection with detectron2 and YOLO is available. Detailed method and results are discussed on the [STDL tech website](https://tech.stdl.ch/PROJ-STREETVIEW/)
 
 This project has been done in partnership with the Institut d'Ingénierie du territoire of the HEIG-VD at Yverdon-les-Bains.
 
