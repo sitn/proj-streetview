@@ -1,72 +1,87 @@
-get_images_rcne.py:
-  working_directory: data/RCNE
-  output_folder: images
-  image_infos: objets_cadastre/photos360_subset.gpkg
-  overwrite: False
-  
+constants:
+  <DATA_PATH>: D:/Repos/proj-streetview/data
+  <OUTPUT_PATH>: D:/Repos/proj-streetview/outputs
+  <COCO_TILES_FOLDER>: D:/Repos/proj-streetview/outputs/00_00_coco_tiles
+  <YOLO_TILES_FOLDER>: D:/Repos/proj-streetview/outputs/00_01_yolo_tiles
+  <YOLO_TRAIN_FOLDER>: D:/Repos/proj-streetview/outputs/01_00_yolo_model_train
+  <YOLO_VALIDATE_FOLDER>: D:/Repos/proj-streetview/outputs/01_01_yolo_model_validate
+  <YOLO_PREDICTION_FOLDER>: D:/Repos/proj-streetview/outputs/01_02_yolo_prediction
+  <MODEL_FOLDER>: run_example
 
-get_stat_images.py:
-  working_directory: .
-  input_folder: /mnt/s3/proj-streetview/02_data/01_initial/01_images/Innovitas_2024/
+global:
+  tile_size : 512
+  seed: 42
+  image_dir : 
+    NE: <DATA_PATH>/NE/images/
+  categories:
+    - id: 1
+      name: manhole,
+      supercategory: round plate
+  datasets_filenames:
+    trn: trn.json
+    val: val.json
+    tst: tst.json
+    oth: oth.json
+  yolo_training_params:
+    patience: 10
+    multi_scale: True
+    translate: 0
+    single_cls: True
+    overlap_mask: False
 
+# 00_preprocessing ------------------------------------------------
 
-prepare_coco_data.py:
-  working_directory: .
+00_create_coco_tiles.py:
   original_COCO_files:
-    RCNE: data/RCNE/Object_Detect_GT/ne_COCO.json
-    # SZH: data/SZH/zh_COCO_13033.json
+    NE: <DATA_PATH>/NE/NE_ground_truth_coco_all.json
   validated_COCO_files:
-    RCNE: data/RCNE/Object_Detect_GT/valid_ne_250725.json
-    # SZH: data/SZH/valid_zh_250731.json
+    NE: <DATA_PATH>/NE/NE_ground_truth_coco_validated_all.json
   clipping_params:
-    RCNE:
+    NE:
       width: 8000
       height: 4000
       overlap_x: 44
       overlap_y: 8
       padding_y: 736
-    SZH:
-      lb4:
-        width: 2048
-        height: 2048
-        overlap_x: 0
-        overlap_y: 0
-        padding_y: 0
-      else:
-        width: 4016
-        height: 4016
-        overlap_x: 74
-        overlap_y: 74
-        padding_y: 0
   ratio_wo_annotations: 0.33
-  seed: 42
   overwrite_images: False
+  test_only: False
+  make_other_dataset: True
   tasks:
-    test_only: False
-    make_other_dataset: True
     yolo:
       prepare_data: True
-      subfolder: outputs/<COCO_FOR_YOLO_FOLDER>
+      subfolder: <COCO_TILES_FOLDER>
 
+01_coco_to_yolo.py:
+  tiles_folder: <COCO_TILES_FOLDER>
+  output_folder: <YOLO_TILES_FOLDER>
 
-coco_to_yolo.py:
-  working_directory: outputs
-  input_folder: <COCO_FOR_YOLO_FOLDER>
-  output_folder: /datasets/<YOLO_DATASET>
+# 01 deep-leraning ------------------------------------------------
 
+00_train_yolo.py:
+  project: <YOLO_TRAIN_FOLDER>
+  name: <MODEL_FOLDER>
+  resume_training: False
+  yolo_data: <YOLO_TILES_FOLDER>
+  yolo_model: yolo11m-seg
+  yolo_best_params:
+    epochs: 75
+    lr0: 0.003
+    optimizer: SGD
 
-redistribute_images.py:
-  working_directory: outputs/<COCO_FOR_YOLO_FOLDER>
-  image_folder: .
-  output_folder: /datasets/<YOLO_DATASET>/images
-  COCO_files:
-    trn: trn.json
-    val: val.json
-    tst: tst.json
-    oth: oth.json
-  overwrite: False
+01_validate_yolo.py:
+  project: <YOLO_TRAIN_FOLDER>/<MODEL_FOLDER>
+  model: <YOLO_TRAIN_FOLDER>/<MODEL_FOLDER>/weights/best.pt
 
-### Training-only ### ------------------------------------------------
+02_infer_with_yolo.py:
+  output_dir: <YOLO_PREDICTION_FOLDER>
+  model: <YOLO_TRAIN_FOLDER>/<MODEL_FOLDER>/weights/best.pt
+  dataset_images_folder:
+    trn: <YOLO_TILES_FOLDER>/images/trn
+    val: <YOLO_TILES_FOLDER>/images/val
+    tst: <YOLO_TILES_FOLDER>/images/tst
+    oth: <YOLO_TILES_FOLDER>/images/oth
+  image_infos: <COCO_TILES_FOLDER>
 
 tune_yolo_model.py:
   working_directory: outputs
@@ -77,57 +92,69 @@ tune_yolo_model.py:
     epochs: 100
     patience: 50    # Number of epochs to wait without improvement in validation metrics before early stopping (default 100)
   
-
 tune_yolo_w_ray.py:
   output_folder: /mnt/data-volume-02/gsalamin/GitHub/proj-streetview/outputs/ray_tune # relative path not supported
-
 
 plot_best.py:
   working_directory: outputs
   ray_results_dir: ray_tune
 
+# 02 postprocessing ------------------------------------------------
 
-train_yolo.py:
-  working_directory: outputs
-  project: yolo/train
-  name: <MODEL_FOLDER>
-  # best_parameters_path: /mnt/s3/proj-streetview/02_data/02_processed/yolo_calibration/tune250830/train_yolo_e6682_00007_7_epochs=75,lr0=0.0030,model=yolo11m-seg,optimizer=SGD_2025-08-30_18-12-33/params.json
-  resume_training: False
-
-
-validate_yolo.py:
-  working_directory: outputs
-  project: yolo/train/<MODEL_FOLDER>
-  model: yolo/train/<MODEL_FOLDER>/weights/best.pt
-
-### ------------------------------------------------
-
-infer_with_yolo.py:
-  working_directory: outputs
-  project: yolo/infer_post_trn/<MODEL_FOLDER>
-  model: yolo/train/<MODEL_FOLDER>/weights/best.pt
-  dataset_images_folder:
-    trn: /datasets/<YOLO_DATASET>/images/trn
-    val: /datasets/<YOLO_DATASET>/images/val
-    tst: /datasets/<YOLO_DATASET>/images/tst
-    oth: /datasets/<YOLO_DATASET>/images/oth
-  coco_info_folder: <COCO_FOR_YOLO_FOLDER>
-
-### Training-only ### ------------------------------------------------
-
-assess_detections.py:
-  working_directory: outputs/yolo/
-  output_folder: infer_post_trn/<MODEL_FOLDER>/eval
+00_assess_detections.py:
+  output_folder: <OUTPUT_PATH>/02_00_assess_detections/
+  scatter_plot_mode: markers+lines
   datasets:
-    path_ground_truth: ../<COCO_FOR_YOLO_FOLDER>
-    ground_truth_files:
-      trn: trn.json
-      val: val.json
-      tst: tst.json
-    path_detections: infer_post_trn/<MODEL_FOLDER>
+    path_ground_truth: <COCO_TILES_FOLDER>
     detections_files:
-      trn: YOLO_trn_detections.json
-      val: YOLO_val_detections.json
-      tst: YOLO_tst_detections.json
-  # confidence_threshold: 0.35
-  # limit_aoi: RCNE
+      trn: <YOLO_PREDICTION_FOLDER>/inference_trn.json
+      val: <YOLO_PREDICTION_FOLDER>/inference_val.json
+      tst: <YOLO_PREDICTION_FOLDER>/inference_tst.json
+
+01_transform_detections.py:
+  output_folder: <OUTPUT_PATH>/02_01_transform_detections
+  detections_files:
+    trn: <YOLO_PREDICTION_FOLDER>/inference_trn.json
+    val: <YOLO_PREDICTION_FOLDER>/inference_val.json
+    tst: <YOLO_PREDICTION_FOLDER>/inference_tst.json
+    oth: <YOLO_PREDICTION_FOLDER>/inference_oth.json
+  panoptic_coco_files:
+    NE: <DATA_PATH>/NE/NE_ground_truth_coco_all.json
+  id_correspondence: <COCO_TILES_FOLDER>/original_ids.csv
+  score_threshold: 0.20
+
+02_clipped_labels_to_panoramic.py:
+  output_folder: <OUTPUT_PATH>/02_02_clipped_labels_to_panoramic
+  labels_files:
+    trn: <COCO_TILES_FOLDER>/trn.json
+    val: <COCO_TILES_FOLDER>/val.json
+    tst: <COCO_TILES_FOLDER>/tst.json
+  panoptic_coco_files:
+    NE: <DATA_PATH>/NE/NE_ground_truth_coco_all.json
+  id_correspondence: <COCO_TILES_FOLDER>/original_ids.csv
+
+03_visualize_results.py:
+  output_folder: <OUTPUT_PATH>/02_03_visualize_results
+  tagged_coco_files:
+    trn: <OUTPUT_PATH>/02_01_transform_detections/trn_COCO_panoptic_detections.json
+    val: <OUTPUT_PATH>/02_01_transform_detections/val_COCO_panoptic_detections.json
+    tst: <OUTPUT_PATH>/02_01_transform_detections/tst_COCO_panoptic_detections.json
+    oth: <OUTPUT_PATH>/02_01_transform_detections/oth_COCO_panoptic_detections.json
+  coco_file_for_images:
+    trn: <OUTPUT_PATH>/02_01_transform_detections/trn_COCO_panoptic_detections.json
+    val: <OUTPUT_PATH>/02_01_transform_detections/val_COCO_panoptic_detections.json
+    tst: <OUTPUT_PATH>/02_01_transform_detections/tst_COCO_panoptic_detections.json
+    oth: <OUTPUT_PATH>/02_01_transform_detections/oth_COCO_panoptic_detections.json
+
+03_visualizer.py:
+  output_folder: <OUTPUT_PATH>/02_03_visualize_results
+  tagged_coco_files:
+    trn: <OUTPUT_PATH>/02_01_transform_detections/trn_COCO_panoptic_detections.json
+    val: <OUTPUT_PATH>/02_01_transform_detections/val_COCO_panoptic_detections.json
+    tst: <OUTPUT_PATH>/02_01_transform_detections/tst_COCO_panoptic_detections.json
+    oth: <OUTPUT_PATH>/02_01_transform_detections/oth_COCO_panoptic_detections.json
+  coco_file_for_images:
+    trn: <OUTPUT_PATH>/02_01_transform_detections/trn_COCO_panoptic_detections.json
+    val: <OUTPUT_PATH>/02_01_transform_detections/val_COCO_panoptic_detections.json
+    tst: <OUTPUT_PATH>/02_01_transform_detections/tst_COCO_panoptic_detections.json
+    oth: <OUTPUT_PATH>/02_01_transform_detections/oth_COCO_panoptic_detections.json

@@ -250,12 +250,10 @@ for tag, meaning in tag_map.items():
 # intensity_gdf.to_file(filepath, driver='GPKG')
 # written_files.append(filepath)
 
-print()
 logger.info("The following files were written. Let's check them out!")
 for written_file in written_files:
     logger.info(written_file)
 
-print()
 
 toc = time()
 logger.success(f"Nothing left to be done: exiting. Elapsed time: {(toc-tic):.2f} seconds")

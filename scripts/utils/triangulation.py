@@ -8,25 +8,18 @@ Public entry points:
 - cylin_pano_proj_ray / cubemap_pano_proj_ray: build rays from detections.
 - triangulation_peeling: main routine for clustering intersections into candidates.
 """
-
-import json
-import numpy as np
-import pandas as pd
-import geopandas as gpd
+import json, numpy as np, pandas as pd, geopandas as gpd, tqdm
 
 from shapely.geometry import Point, Polygon
 from typing import List, Dict
-from tqdm import tqdm
 from sklearn.cluster import DBSCAN
 from .projection import *
 from collections import defaultdict
 from sklearn.neighbors import KDTree
 from skimage.measure import EllipseModel
 
-
 class Ray():
     """A ray in 3D associated with a frame and an optional detection.
-
     Attributes:
         origin (np.ndarray): Camera center in world coordinates (3,).
         direction (np.ndarray): Unit direction vector from origin (3,).
@@ -41,8 +34,6 @@ class Ray():
         self.candidate_id = candidate_id  # which candidate this ray is currently associated with
         self.mask_area = mask_area
 
-
-# Intersection class definition
 class Intersection:
     """Metadata for the closest-approach between two rays.
 
@@ -71,14 +62,14 @@ class Candidate:
         last_seen (int): Frame index when last updated.
         missing (int): Consecutive frames without an update.
     """
-    def __init__(self, center, intersections, mean_intersection_length, mean_intersection_dist, last_seen, missing):
+    def __init__(self, center, intersections, mean_intersection_length, mean_intersection_dist, last_seen, missing, datasets):
         self.center = center
         self.intersections = set(intersections)
         self.mean_intersection_length = mean_intersection_length
         self.mean_intersection_dist = mean_intersection_dist
         self.last_seen = last_seen
         self.missing = missing
-
+        self.datasets = datasets
 
     def update(self, center, intersections, mean_intersection_length, mean_intersection_dist, last_seen):
         """Merge in intersections and refresh center; reset missing counter."""
@@ -89,11 +80,9 @@ class Candidate:
         self.last_seen = last_seen
         self.missing = 0
 
-
     def increment_missing(self):
         """Mark that this candidate was not updated in the current frame."""
         self.missing += 1
-
 
     def to_row(self):
         """Serialize to a GeoDataFrame row dictionary."""
@@ -102,9 +91,9 @@ class Candidate:
             'intersections': len(self.intersections),
             'mean_intersection_length': self.mean_intersection_length,
             'mean_intersection_dist': self.mean_intersection_dist,
-            'geometry': Point(self.center[0], self.center[1])
+            'datasets': self.datasets,
+            'geometry': Point(self.center[0], self.center[1]),
         }
-
 
 def manhole_radius_from_pixel_area(mask_area, ray_dir, Z, W, H, manhole_normal=[0,1,0]):
     """
@@ -144,7 +133,6 @@ def manhole_radius_from_pixel_area(mask_area, ray_dir, Z, W, H, manhole_normal=[
     scale = (W * H) / (2 * np.pi**2) * (cos_gamma / cos_phi)
 
     R = Z * np.sqrt(mask_area / scale)
-
     return R
 
 
@@ -153,26 +141,18 @@ def project_ellipse_center_to_world(camera_meta: np.ndarray, ellipse_center_px: 
     Project ellipse center in image to a ray in world coordinates.
     Returns {'origin': np.ndarray, 'direction': np.ndarray}
     """
-    
     film_coords = spherical_unprojection(ellipse_center_px[0], ellipse_center_px[1], 1, camera_meta['width'], camera_meta['height'])
     x_local, y_local, z_local = transform_to_local_crs(film_coords[0], film_coords[1], film_coords[2], camera_meta)
     ray_vertex = np.array([x_local, y_local, z_local])
-
     cam_center = np.array([camera_meta['x'], camera_meta['y'], camera_meta['z']])
     ray_ori = ray_vertex - cam_center
-    ray_data = {
-        'origin': cam_center,
-        'direction': ray_ori
-    }
-    return ray_data
-
+    return {'origin': cam_center, 'direction': ray_ori}
 
 def cubemap_pixel_to_world(cubemap: GeoFrame, pixel_coords: np.ndarray, face_idx: int) -> Dict:
     """
     Project ellipse center in image to a ray in world coordinates.
     Returns {'origin': np.ndarray, 'direction': np.ndarray}
     """
-
     if len(pixel_coords.shape) == 1:
         pixel_coords = pixel_coords[None,:]
 
@@ -186,12 +166,7 @@ def cubemap_pixel_to_world(cubemap: GeoFrame, pixel_coords: np.ndarray, face_idx
     ray_vertex = world_coords.flatten()
     cam_center = cubemap.get_world_ori_for_sensor_id(*sid)[:3]
     ray_ori = ray_vertex - cam_center
-    ray_data = {
-        'origin': np.array(cam_center),
-        'direction': np.array(ray_ori)
-    }
-    return ray_data
-
+    return {'origin': np.array(cam_center), 'direction': np.array(ray_ori)}
 
 def spatial_temporal_group_sort(
     gdf,
@@ -205,7 +180,6 @@ def spatial_temporal_group_sort(
 ):
     """
     Two-stage spatial-temporal sort on groupby object.
-    
     Parameters:
         gdf: GroupBy GeoDataFrame.
         groupby_col: GroupBy column.
@@ -213,7 +187,6 @@ def spatial_temporal_group_sort(
         x_col, y_col, z_col (str): Position columns (shared within each group).
         radius (float): Search radius in meters.
         output_column (str): Name of output sort index column.
-    
     Returns:
         GeoDataFrame: With new sort_index column.
         GroupBy: Sorted groupby object (ordered by sort_index).
@@ -221,15 +194,13 @@ def spatial_temporal_group_sort(
 
     # Step 1: Extract one row per group to represent its position and time
     gdf_grouped = gdf.groupby(groupby_col)
-    group_meta = (
-        gdf_grouped[[time_column, x_col, y_col, z_col]]
-        .first()
-        .reset_index()
-    )
+    group_meta = (gdf_grouped[[time_column, x_col, y_col, z_col]].first().reset_index())
+
+    print(group_meta)
 
     # Sort groups by time (Stage 1)
     group_meta = group_meta.sort_values(by=time_column).reset_index(drop=True)
-    positions = group_meta[[x_col, y_col, z_col]].values
+    positions = group_meta[[x_col, y_col, z_col]].values.astype(float)
     image_ids = group_meta[groupby_col].values
 
     tree = KDTree(positions)
@@ -282,9 +253,7 @@ def spatial_temporal_group_sort(
     gdf_with_sort[output_column] = gdf_with_sort[groupby_col].map(sort_index_map)
 
     # Return new dataframe and sorted groupby object
-    gdf_sorted = gdf_with_sort.sort_values(by=output_column)
-    return gdf_sorted.groupby(groupby_col, sort=False)
-
+    return gdf_with_sort.sort_values(by=output_column).groupby(groupby_col, sort=False)
 
 def compute_ray_intersection(ray1: Ray, ray2: Ray, radius: float = 10.0, distance_threshold: float = 0.5, ac: bool=False, hc: bool=True) -> np.ndarray:
     """
@@ -325,7 +294,6 @@ def compute_ray_intersection(ray1: Ray, ray2: Ray, radius: float = 10.0, distanc
             return None, None, None
     return intersect, dist, max(t1, t2)
 
-
 def cluster_intersections(intersections: List[np.ndarray], distance_threshold: float = 0.5) -> List[List[int]]:
     """Cluster intersection points by spatial proximity using DBSCAN."""
     if len(intersections) == 0:
@@ -339,10 +307,8 @@ def cluster_intersections(intersections: List[np.ndarray], distance_threshold: f
         clusters.append(cluster)
     return clusters
 
-
 def load_coco_inferences(coco_json_path: str, t_score: float=0.5) -> gpd.GeoDataFrame:
     """Load COCO-style detections and return image and annotation tables.
-
     Args:
         coco_json_path (str): Path to a COCO JSON file containing images and annotations.
         t_score (float): Keep annotations with score >= t_score.
@@ -350,36 +316,27 @@ def load_coco_inferences(coco_json_path: str, t_score: float=0.5) -> gpd.GeoData
     Returns:
         Tuple[pd.DataFrame, gpd.GeoDataFrame]: images dataframe and annotations GeoDataFrame.
     """
-    # Load COCO data
     with open(coco_json_path, 'r') as f:
         coco_data = json.load(f)
 
-    # Build a DataFrame from coco_data['images']
     images_df = pd.DataFrame(coco_data['images'])
     images_df.id = images_df.id.astype(int)
 
     # Prepare a list of annotation records
     records = []
     for ann in coco_data['annotations']:
-        if float(ann['score']) < t_score:
-            continue
-        image_id = ann['image_id']
-        segmentation = ann['segmentation'][0]
-
-        coords = [(segmentation[i], segmentation[i+1]) for i in range(0, len(segmentation), 2)]
-        geometry = Polygon(coords)
-        records.append({
-            'image_id': image_id,
-            'category_id': ann.get('category_id', None),
-            'geometry': geometry,
-            'annotation_id': ann.get('id', None),
-            'score': ann.get('score', None),
-            'area': ann.get('area', None)
-        })
-
-    ann_gdf = gpd.GeoDataFrame(records, geometry='geometry', crs="epsg:2056")
-
-    return images_df, ann_gdf
+        if float(ann['score']) >= t_score:
+            segmentation = ann['segmentation'][0]
+            coords = [(segmentation[i], segmentation[i+1]) for i in range(0, len(segmentation), 2)]
+            records.append({
+                'image_id': ann['image_id'],
+                'category_id': ann.get('category_id', None),
+                'geometry': Polygon(coords),
+                'annotation_id': ann.get('id', None),
+                'score': ann.get('score', None),
+                'area': ann.get('area', None)
+            })
+    return images_df, gpd.GeoDataFrame(records, geometry='geometry', crs="epsg:2056")
 
 
 # Extract '102-35582' as frame_id, 'lb4' as camera_model, and '0' as cube_idx from '102-lb4-0-35582.jpg'
@@ -418,24 +375,20 @@ def cylin_pano_proj_ray(
         'width':    df_frame.iloc[0]['width'],
         'height':   df_frame.iloc[0]['height']
     }
-
     # Get predicted masks for this image 
     new_rays = []
     for _, det in df_frame.iterrows():
         # Fit a minimum area ellipse to the contour of det.geometry and use its center as center_px
         coords = np.array(det.geometry.exterior.coords)
-        ellipse = EllipseModel()
-        success = ellipse.estimate(coords)
-        if success:
-            xc, yc, a, b, theta = ellipse.params
-            center_px = (xc, yc)
+        ellipse = EllipseModel.from_estimate(coords)
+        if ellipse:
+            center_px = ellipse.center
         else:
             # Fallback to centroid if ellipse fit fails
             center_px = np.array(det.geometry_y.centroid.coords)[0]
         ray_data = project_ellipse_center_to_world(camera_meta, center_px)
         ray = Ray(ray_data['origin'], ray_data['direction'], frame_id, mask_area=det.area)
         new_rays.append(ray)
-
     return new_rays
 
 
@@ -481,10 +434,11 @@ def cubemap_pano_proj_ray(
     for _, det in df_frame.iterrows():
         # Fit a minimum area ellipse to the contour of det.geometry and use its center as center_px
         coords = np.array(det.geometry.exterior.coords)
-        ellipse = EllipseModel()
-        success = ellipse.estimate(coords)
-        if success:
-            xc, yc, a, b, theta = ellipse.params
+        ellipse = EllipseModel.from_estimate(coords)
+        if ellipse:
+            xc, yc = ellipse.center
+            a, b = ellipse.axis_length
+            theta = ellipse.theta
             center_px = np.array([xc, yc])
             # Calculate IoU between fitted ellipse and det.geometry
             # Create a polygon approximation of the fitted ellipse
@@ -522,12 +476,10 @@ def triangulation_peeling(
     candidate_missing_limit=5,            # number of consecutive frames without new rays before removal
     radius=20.0,
     mask_area_control=False,
-    height_control=True,
-    tqdm_desc="Processing frames"
+    height_control=True
 ):
     """
     Perform triangulation and candidate peeling clustering on grouped frames.
-
     Args:
         grouped: iterable of (image_id, df_frame) pairs, grouped and sorted.
         pano_proj_ray: function receive (frame_id, frame, meta_cols, offset), create 3d ray using defined projection
@@ -538,8 +490,6 @@ def triangulation_peeling(
         radius: float, max distance for ray intersection.
         mask_area_control: bool, use mask area in intersection.
         height_control: bool, use height in intersection.
-        tqdm_desc: str, description for tqdm progress bar.
-
     Returns:
         out_gdf: GeoDataFrame of final candidates.
         candidate_list: list of Candidate objects.
@@ -551,17 +501,16 @@ def triangulation_peeling(
     candidate_list = []  # List of Candidate objects
     intersection_objs = []  # List of Intersection objects
 
-    iterator = tqdm(grouped, total=len(grouped), desc=tqdm_desc)
+    iterator = tqdm.tqdm(grouped, total=len(grouped), desc="Processing frames")
 
     # Maintain sets of active indices for rays, candidates, and intersections
     active_ray_indices = set()
     active_candidate_indices = set()
     active_intersection_indices = set()
-
     false_pos_indices = set()
 
     for frame_id, frame in enumerate(iterator):
-
+        datasets = set(frame[1]['dataset'])
         new_rays = pano_proj_ray(frame_id, frame)
 
         # Add new rays to the ray list
@@ -655,7 +604,8 @@ def triangulation_peeling(
                         mean_intersection_length=mean_intersection_length,
                         mean_intersection_dist=mean_intersection_dist,
                         last_seen=frame_id,
-                        missing=0
+                        missing=0,
+                        datasets=datasets
                     )
                 )
 
@@ -715,7 +665,8 @@ def triangulation_peeling(
                         mean_intersection_length=nc_mean_length,
                         mean_intersection_dist=nc_mean_dist,
                         last_seen=frame_id,
-                        missing=0
+                        missing=0,
+                        datasets=datasets
                     )
                 )
                 new_cid = len(candidate_list) - 1
@@ -743,14 +694,13 @@ def triangulation_peeling(
     # Duplicated detection results from overlap of trajectory and dynamic pool corner case will be merged
 
     # Prepare candidate centers for clustering
-    candidate_centers = np.array([cand.center for cand in candidate_list])
+    candidate_centers = np.array([c.center for c in candidate_list])
     if len(candidate_centers) == 0:
         out_gdf = gpd.GeoDataFrame([], geometry='geometry', crs="epsg:2056")
     else:
         db = DBSCAN(eps=candidate_update_threshold, min_samples=1)
         # db = DBSCAN(eps=intersection_distance_threshold, min_samples=1)
         labels = db.fit_predict(candidate_centers)
-
 
         clusters = defaultdict(list)
         for idx, label in enumerate(labels):
@@ -759,7 +709,7 @@ def triangulation_peeling(
         new_candidate_list = []
         old_to_new_cid = {}
 
-        for label, indices in tqdm(clusters.items()):
+        for label, indices in tqdm.tqdm(clusters.items()):
             if len(indices) == 1:
                 orig_cid = indices[0]
                 new_cid = len(new_candidate_list)
@@ -769,11 +719,13 @@ def triangulation_peeling(
                 merged_intersections = set()
                 merged_last_seen = -1
                 merged_missing = float('inf')
+                datasets = candidate_list[0].datasets
                 for cid in indices:
                     cand = candidate_list[cid]
                     merged_intersections.update(cand.intersections)
                     merged_last_seen = max(merged_last_seen, cand.last_seen)
                     merged_missing = min(merged_missing, cand.missing)
+                    datasets = datasets.union(candidate_list[cid].datasets)
                 intersection_points = []
                 intersection_lengths = []
                 intersection_dists = []
@@ -798,7 +750,8 @@ def triangulation_peeling(
                     mean_intersection_length=mean_intersection_length,
                     mean_intersection_dist=mean_intersection_dist,
                     last_seen=merged_last_seen,
-                    missing=merged_missing
+                    missing=merged_missing,
+                    datasets=datasets
                 )
                 new_cid = len(new_candidate_list)
                 for k in indices:
@@ -808,14 +761,8 @@ def triangulation_peeling(
         candidate_list = new_candidate_list
         active_candidate_indices = set(old_to_new_cid[cid] for cid in active_candidate_indices if cid in old_to_new_cid)
 
-        rows = []
-        for cid, cand in enumerate(candidate_list):
-            row = cand.to_row()
-            rows.append(row)
+        out_gdf = gpd.GeoDataFrame([c.to_row() for c in candidate_list], geometry='geometry', crs="epsg:2056")
 
-        out_gdf = gpd.GeoDataFrame(rows, geometry='geometry', crs="epsg:2056")
-
-    
     # Filter out intersections flagged as false positives in the return value
     filtered_intersection_objs = [obj for i, obj in enumerate(intersection_objs) if i not in false_pos_indices]
     return out_gdf, candidate_list, ray_list, filtered_intersection_objs

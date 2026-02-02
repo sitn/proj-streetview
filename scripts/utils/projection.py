@@ -3,12 +3,9 @@ Projection and camera geometry utilities used to convert between world, frame,
 image, and sensor coordinate systems. Supports cube-map multi-head cameras via
 `GeoFrame` and helpers for cylindrical panoramas.
 """
-
 import numpy as np
-
 from typing import Optional, Union, List, Tuple
 from pyproj import Transformer
-
 
 class SensorPosition():
     """Relative position offsets of a sensor head in meters."""
@@ -17,14 +14,12 @@ class SensorPosition():
         self.dy = dy
         self.dz = dz
 
-
 class SensorOrientation():
     """Relative orientation offsets of a sensor head in radians (omega, phi, kappa)."""
     def __init__(self, domega: float, dphi: float, dkappa: float):
         self.domega = domega
         self.dphi = dphi
         self.dkappa = dkappa
-
 
 class ImageMeta():
     """Intrinsic image parameters for a single sensor head.
@@ -41,7 +36,6 @@ class ImageMeta():
         self.pixsize = pixsize
         self.focal_length = focal_length
 
-
 class Sensor():
     """One physical sensor head with relative pose and focal length."""
     def __init__(self, id: int, position: SensorPosition, orientation: SensorOrientation, focal_length: float):
@@ -50,10 +44,8 @@ class Sensor():
         self.orientation = orientation
         self.focal_length = focal_length
 
-
 class GeoFrame():
     """Camera rig model that maps between world, frame, model, image and sensor spaces.
-
     Handles multi-head cube-map cameras by defining per-sensor relative poses and
     face directions. The class exposes a sequence of transforms and helpers for
     selecting sensor IDs based on latitude/longitude bins in the rig's mosaic layout.
@@ -245,7 +237,6 @@ class GeoFrame():
         }
     }
 
-
     def __init__(self, 
                  easting: float,
                  northing: float,
@@ -318,7 +309,6 @@ class GeoFrame():
         mat_rot[3, 3] = 1
         return mat_rot
 
-
     def get_LatLon(self, world: Union[np.ndarray, List[float]]) -> np.ndarray:
         """
         Given world coordinates in the local CRS, calculate their longitude and latitude
@@ -342,7 +332,6 @@ class GeoFrame():
         latitude = np.degrees(np.arctan2(self.frame_y, hyp))
         return np.column_stack([latitude, longitude])
     
-
     def latlon_to_sensor_id(self, latlon: Union[List[float], Tuple[float, float], np.ndarray]) -> np.ndarray:
         """
         Map latitude/longitude pairs to sensor IDs based on multi_head_mask.
@@ -373,7 +362,6 @@ class GeoFrame():
         # Return scalar if input was 1D, else array
         return sensor_ids
 
-
     def get_face_id(self) -> Union[int, np.ndarray]:
         """Return best-matching cube face index for current `frame_*` direction vectors."""
 
@@ -397,7 +385,6 @@ class GeoFrame():
         # Return scalar if input was 1D, else array
         return int(face_indices[0]) if face_indices.size == 1 else face_indices
     
-
     def rot_from_wgs84(self):
         local_to_wgs84 = Transformer.from_crs("EPSG:2056", "EPSG:4326", always_xy=True)
         wgs84_easting, wgs84_northing, wgs84_height = local_to_wgs84.transform(self.easting, self.northing, self.height)
@@ -408,13 +395,11 @@ class GeoFrame():
         meridian_convergence = np.rad2deg(np.arctan2(delta_x, delta_y))
         return GeoFrame._rot_wgs84_metric(self.omega, self.phi, self.kappa, -meridian_convergence)
 
-
     def get_sensor_by_id(self, sensor_id: int) -> Optional[Sensor]:
         for sensor in self.sensors:
             if sensor.id == sensor_id:
                 return sensor
         return None
-
 
     def get_world_ori_for_sensor_id(self, sensor_id: int) -> List[float]:
         sensor = self.get_sensor_by_id(sensor_id)
@@ -441,7 +426,6 @@ class GeoFrame():
         rot = self.get_opk_from_rotation_matrix(R_c_w)
         return [world[0], world[1], world[2], rot[0], rot[1], rot[2]]
 
-
     def sensor_id_from_model(self, model: Union[np.ndarray, List[float]], face_id: int):
         """Compute sensor ID for each model-space direction, given a cube face index."""
 
@@ -458,7 +442,6 @@ class GeoFrame():
         latitude = np.degrees(np.arctan2(frame_y, hyp))
         sensor_ids = self.latlon_to_sensor_id(np.column_stack([latitude, longitude]))
         return sensor_ids
-
 
     def world_to_frame(self, world: Union[np.ndarray, List[float]], sensor_id: int) -> np.ndarray:
         """Transform points from world coordinates to the sensor's camera frame."""
@@ -479,7 +462,6 @@ class GeoFrame():
         # depth = np.sqrt(np.sum(frame**2, axis=1))
         return frame
     
-
     def frame_to_model(self, frame: np.ndarray, sensor_id: int, face_id: int) -> np.ndarray:
         """Transform points from the sensor's camera frame to model (unit ray) space."""
         sensor = self.get_sensor_by_id(sensor_id)
@@ -496,7 +478,6 @@ class GeoFrame():
         model = GeoFrame.apply_matrix4(R_c_c0.T, model)
         return model
 
-
     def model_to_image(self, model: np.ndarray) -> np.ndarray:
         """Project model-space rays to image plane coordinates (meters)."""
         model = model.reshape(-1, 3)
@@ -505,7 +486,6 @@ class GeoFrame():
         image[:, 1] = self.imagemeta.focal_length * -1.0 * (model[:, 1] / model[:, 2])
         return image
 
-
     def image_to_sensor(self, image: np.ndarray) -> np.ndarray:
         """Convert image plane meters to sensor pixel coordinates."""
         sensor_xy = np.zeros((image.shape[0], 2))
@@ -513,14 +493,12 @@ class GeoFrame():
         sensor_xy[:, 1] = image[:, 1] / (-1.0 * self.imagemeta.pixsize) + self.imagemeta.height / 2.0
         return sensor_xy
     
-
     def sensor_to_image(self, sensor: np.ndarray) -> np.ndarray:
         """Convert sensor pixel coordinates to image plane meters."""
         image_xy = np.zeros((sensor.shape[0], 2))
         image_xy[:, 0] = (sensor[:, 0] - self.imagemeta.width / 2.0) * self.imagemeta.pixsize 
         image_xy[:, 1] = -1 * (sensor[:, 1] - self.imagemeta.height / 2.0) * self.imagemeta.pixsize 
         return image_xy
-
 
     def image_to_model(self, image: np.ndarray) -> np.ndarray:
         """Back-project image-plane meters to unit-length model-space rays."""
@@ -530,9 +508,7 @@ class GeoFrame():
         model[:, 2] = -1 * self.imagemeta.focal_length
         length = np.sqrt(np.sum(model**2, axis=1))
         model /= length
-
         return model
-
 
     def model_to_frame(self, model: np.ndarray, face_id: int) -> np.ndarray:
         """Map model-space directions to the sensor camera frame for each sensor ID."""
@@ -556,7 +532,6 @@ class GeoFrame():
             frames[indices] = frame_subset
         return frames, sensor_ids
 
-
     def frame_to_world(self, frame: np.ndarray) -> np.ndarray:
         """Transform camera frame points to world coordinates."""
         world = frame.copy()
@@ -569,7 +544,6 @@ class GeoFrame():
         world = GeoFrame.apply_matrix4(R_c0_w, world)
         world += r_w_c0
         return world
-
 
     def get_opk_from_rotation_matrix(self, R: np.ndarray) -> List[float]:
         """Extract OPK Euler angles (omega, phi, kappa) from a 4x4 rotation matrix."""
@@ -595,7 +569,6 @@ class GeoFrame():
                 kappa = -np.arctan2(r22, r32)
         return [omega, phi, kappa] 
 
-
     @staticmethod
     def mod(n, m):
         """
@@ -611,7 +584,6 @@ class GeoFrame():
         """
         return ((n % m) + m) % m
 
-
     @staticmethod
     def _opk_to_matrix(o, p, k):
         so = np.sin(o)
@@ -626,7 +598,6 @@ class GeoFrame():
             [so * sk - co * sp * ck, so * ck + co * sp * sk, co * cp]
         ])
         return mat
-
 
     @staticmethod
     def _matrix_to_opk(matrix):
@@ -646,7 +617,6 @@ class GeoFrame():
             np.rad2deg(k)
         )
 
-
     @staticmethod
     def _rot_wgs84_metric(o, p, k, meridian_convergence):
         r_pose = GeoFrame._opk_to_matrix(o, p, k)
@@ -654,7 +624,6 @@ class GeoFrame():
         r_mc_T = r_meridian_convergence.T
         r = r_mc_T @ r_pose
         return GeoFrame._matrix_to_opk(r.T)
-
 
     @staticmethod
     def apply_matrix4(matrix4x4, points):
@@ -674,7 +643,6 @@ class GeoFrame():
         transformed_xyz = transformed[:, :3] / nonzero_w
         return transformed_xyz[0] if transformed_xyz.shape[0] == 1 else transformed_xyz
     
-
 def ypr2mat(yaw: float, pitch: float, roll: float) -> np.ndarray:
     """
     Reproduce Metashape's ypr2mat behavior.
@@ -713,11 +681,9 @@ def ypr2mat(yaw: float, pitch: float, roll: float) -> np.ndarray:
     R = R_z @ R_x @ R_y 
     return R
 
-
 def transform_to_camera_crs(x: np.ndarray, y: np.ndarray, z: np.ndarray, camera_meta: dict) -> tuple:
     """
     Transforms points from local CRS to camera CRS.
-    
     Args:
         x, y, z: 1D arrays (NumPy arrays, or Pandas Series) of 
                  the x, y, z coordinates of points in local CRS.
@@ -727,7 +693,6 @@ def transform_to_camera_crs(x: np.ndarray, y: np.ndarray, z: np.ndarray, camera_
     Returns:
         A Tuple of three 1D arrays (x', y', z') representing points in camera CRS.
     """
-
     # translation  
     x = np.array(x - camera_meta['x'])
     y = np.array(y - camera_meta['y'])
@@ -742,21 +707,17 @@ def transform_to_camera_crs(x: np.ndarray, y: np.ndarray, z: np.ndarray, camera_
     points = np.stack([x, y, z], axis=-1)  # shape (N, 3)
     transformed_points = (R.T @ points.T).T  # shape (N, 3)
     x_cam, y_cam, z_cam = transformed_points.T
-    
     return x_cam, y_cam, z_cam
-
 
 def spherical_projection(x: np.ndarray, y: np.ndarray, z: np.ndarray, w: int, h: int) -> tuple:
     """
     Project 3D LiDAR points to 2D spherical coordinates.
-
     Args:
         x (np.ndarray): X coordinates of the points.
         y (np.ndarray): Y coordinates of the points.
         z (np.ndarray): Z coordinates of the points.
         w (int): Width of the output image.
         h (int): Height of the output image.
-
     Returns:
         Tuple[np.ndarray, np.ndarray]: 
             u (np.ndarray): U coordinates in the image.
@@ -766,15 +727,12 @@ def spherical_projection(x: np.ndarray, y: np.ndarray, z: np.ndarray, w: int, h:
     f = w / (2 * np.pi) 
     u = 0.5 * w + f * np.arctan2(x, z)  
     v = 0.5 * h + f * np.arctan2(y, np.sqrt(x**2 + z**2)) 
-
     return u, v
-
 
 def spherical_unprojection(u: np.ndarray, v: np.ndarray, r: np.ndarray, w: int, h: int) -> tuple:
     """
     Reverse spherical projection: map 2D pixel coordinates (u, v) and depth r
     back to 3D camera CRS coordinates (x, y, z).
-
     Args:
         u (np.ndarray): U coordinates in the image.
         v (np.ndarray): V coordinates in the image.
@@ -798,7 +756,6 @@ def spherical_unprojection(u: np.ndarray, v: np.ndarray, r: np.ndarray, w: int, 
     y = r * np.sin(elevation)
     z = r * np.cos(azimuth) * np.cos(elevation)
     return x, y, z
-
 
 def transform_to_local_crs(x_cam: np.ndarray, y_cam: np.ndarray, z_cam: np.ndarray, camera_meta: dict) -> tuple:
     """
@@ -829,40 +786,33 @@ def transform_to_local_crs(x_cam: np.ndarray, y_cam: np.ndarray, z_cam: np.ndarr
     
     return x, y, z
 
-
 def euler_zyx_to_matrix(rz, ry, rx):
     """Build rotation matrix from intrinsic ZYX (yaw-pitch-roll) angles."""
     cz, sz = np.cos(rz), np.sin(rz)
     cy, sy = np.cos(ry), np.sin(ry)
     cx, sx = np.cos(rx), np.sin(rx)
-
     Rz = np.array([
         [cz, -sz, 0],
         [sz,  cz, 0],
         [ 0,   0, 1]
     ])
-
     Ry = np.array([
         [cy, 0, sy],
         [ 0, 1,  0],
         [-sy, 0, cy]
     ])
-
     Rx = np.array([
         [1,  0,   0],
         [0, cx, -sx],
         [0, sx,  cx]
     ])
-
     return Rz @ Ry @ Rx
-
 
 def rotation_matrix_to_opk(R):
     """
     Extract omega (X), phi (Y), kappa (Z) from rotation matrix.
     Assumes world to camera rotation (ENU to right-up-backward).
     """
-    
     if abs(R[2, 0]) < 1.0:
         phi = np.arcsin(-R[2, 0])
         omega = np.arctan2(R[2,1] / np.cos(phi), R[2,2] / np.cos(phi))
@@ -872,22 +822,17 @@ def rotation_matrix_to_opk(R):
         phi = np.pi / 2 if R[2,0] <= -1.0 else -np.pi / 2
         omega = 0
         kappa = np.arctan2(-R[0,1], R[1,1])
-    
     return omega, phi, kappa
-
 
 def rxryrz_to_opk(rx, ry, rz):
     R = euler_zyx_to_matrix(rz, ry, rx)  # Note: RzRyRx intrinsic order
     return rotation_matrix_to_opk(R)
 
-
 def replace_zeros_with_nearest(z):
     """
     Replace all zero elements in a 1D array with the value of the nearest non-zero element.
-
     Args:
         z (array-like): Input 1D array.
-
     Returns:
         np.ndarray: Array with zeros replaced by the nearest non-zero values.
     """
@@ -911,5 +856,4 @@ def replace_zeros_with_nearest(z):
         nearest_index = non_zero_indices[np.argmin(distances)]
         # Replace zero with the nearest non-zero value
         result[i] = z[nearest_index]
-
     return result
